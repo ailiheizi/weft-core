@@ -21,8 +21,20 @@ jobs:
       - name: Publish weft-package-sdk
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p weft-package-sdk --allow-dirty
+        run: |
+          for i in 1 2 3 4 5; do
+            cargo publish -p weft-package-sdk --allow-dirty && exit 0
+            echo "crates.io publish attempt $i failed, retrying in 30s..."
+            sleep 30
+          done
+          exit 1
       - name: Publish weft-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p weft-core --allow-dirty
+        run: |
+          for i in 1 2 3 4 5; do
+            cargo publish -p weft-core --allow-dirty && exit 0
+            echo "crates.io publish attempt $i failed, retrying in 30s..."
+            sleep 30
+          done
+          exit 1
