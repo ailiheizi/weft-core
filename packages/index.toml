@@ -1,0 +1,5 @@
+# Minimal package index for standalone weft-core.
+# Production apps mount a full packages/ tree or set registry.package_source_url.
+version = 1
+revision = "packages-index-v1-minimal"
+source_url = "local://packages"

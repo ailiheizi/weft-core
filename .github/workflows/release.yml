@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build binaries
+        run: cargo build -p weft-core --release --target ${{ matrix.target }}
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/weft-core-${VERSION}-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/weft-core dist/weft-core-${VERSION}-${{ matrix.target }}/
+          cp target/${{ matrix.target }}/release/weft dist/weft-core-${VERSION}-${{ matrix.target }}/ || true
+          cp target/${{ matrix.target }}/release/weft-sign dist/weft-core-${VERSION}-${{ matrix.target }}/ || true
+          cp target/${{ matrix.target }}/release/weft-rpc dist/weft-core-${VERSION}-${{ matrix.target }}/ || true
+          cp config.example.toml dist/weft-core-${VERSION}-${{ matrix.target }}/
+          cp -r packages dist/weft-core-${VERSION}-${{ matrix.target }}/
+          tar -czf dist/weft-core-${VERSION}-${{ matrix.target }}.tar.gz -C dist weft-core-${VERSION}-${{ matrix.target }}
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v',''
+          $dir = "dist/weft-core-$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/weft-core.exe" $dir/
+          Copy-Item "target/${{ matrix.target }}/release/weft.exe" $dir/ -ErrorAction SilentlyContinue
+          Copy-Item "target/${{ matrix.target }}/release/weft-sign.exe" $dir/ -ErrorAction SilentlyContinue
+          Copy-Item "target/${{ matrix.target }}/release/weft-rpc.exe" $dir/ -ErrorAction SilentlyContinue
+          Copy-Item config.example.toml $dir/
+          Copy-Item -Recurse packages $dir/
+          Compress-Archive -Path $dir -DestinationPath "dist/weft-core-$version-${{ matrix.target }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weft-core-${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

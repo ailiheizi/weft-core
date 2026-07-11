@@ -1,0 +1,605 @@
+openapi: 3.0.3
+info:
+  title: Weft Core HTTP API
+  description: |
+    Local loopback HTTP API exposed by `weft-core`.
+
+    - **`/v1/*`** — OpenAI-compatible inference surface (stable).
+    - **`/api/*`** — Management and runtime control (pre-1.0; see `docs/SEMVER.md`).
+
+    The server binds to loopback (`127.0.0.1:17830` by default). Most routes require a
+    Bearer token read from `data/runtime-token` at startup.
+  version: 0.1.0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://127.0.0.1:17830
+    description: Default local loopback endpoint
+
+tags:
+  - name: Health
+    description: Liveness and version probes
+  - name: OpenAI
+    description: OpenAI-compatible chat and model listing
+  - name: Capabilities
+    description: Registered capability discovery and invocation
+  - name: Packages
+    description: Package index and registry metadata
+  - name: Providers
+    description: Upstream LLM provider configuration
+  - name: Apps
+    description: Resolved application manifests and runtime state
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns service liveness and crate version. Does not require authentication.
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                version: "0.1.0"
+
+  /v1/models:
+    get:
+      tags: [OpenAI]
+      summary: List models
+      description: |
+        OpenAI-compatible model list aggregated from configured providers.
+        Unauthenticated on loopback (see route policy in `core/src/api/mod.rs`).
+      security: []
+      operationId: listModels
+      responses:
+        "200":
+          description: Model list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelListResponse"
+
+  /v1/chat/completions:
+    post:
+      tags: [OpenAI]
+      summary: Create chat completion
+      description: |
+        Proxies chat completion requests to configured upstream providers.
+        Supports JSON response or Server-Sent Events when `stream: true`.
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Completion result (non-streaming) or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              schema:
+                type: string
+                description: OpenAI-style SSE chunks; final event is `data: [DONE]`
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          description: Upstream proxy error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/capabilities:
+    get:
+      tags: [Capabilities]
+      summary: List capabilities
+      operationId: listCapabilities
+      responses:
+        "200":
+          description: All registered capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/capabilities/{name}/call:
+    post:
+      tags: [Capabilities]
+      summary: Invoke a capability
+      description: |
+        Dispatches a JSON payload to the provider bound to the named capability.
+        Response shape depends on the capability implementation.
+      operationId: callCapability
+      parameters:
+        - $ref: "#/components/parameters/CapabilityName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Capability-specific input payload
+            example:
+              app: my-app
+              input:
+                prompt: "Hello"
+      responses:
+        "200":
+          description: Capability executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityCallResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Capability not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorObject"
+        "502":
+          description: Capability execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorObject"
+
+  /api/packages:
+    get:
+      tags: [Packages]
+      summary: List package index
+      operationId: listPackages
+      responses:
+        "200":
+          description: Package registry index
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageIndexResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/providers:
+    get:
+      tags: [Providers]
+      summary: List providers
+      operationId: listProviders
+      responses:
+        "200":
+          description: Configured upstream providers and routing defaults
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Providers]
+      summary: Create provider
+      operationId: createProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProviderRequest"
+      responses:
+        "201":
+          description: Provider created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Provider name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorObject"
+
+  /api/apps:
+    get:
+      tags: [Apps]
+      summary: List resolved apps
+      operationId: listApps
+      responses:
+        "200":
+          description: All resolved application instances
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: runtime-token
+      description: |
+        Loopback bearer token written to `data/runtime-token` at core startup.
+        Send as `Authorization: Bearer <token>`.
+
+  parameters:
+    CapabilityName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Capability identifier (e.g. `image.generate`)
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorObject"
+          example:
+            error: missing or invalid loopback bearer token
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        version:
+          type: string
+          description: `CARGO_PKG_VERSION` of weft-core
+          example: "0.1.0"
+
+    ErrorObject:
+      type: object
+      properties:
+        error:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              example: proxy_error
+            code:
+              type: string
+              nullable: true
+              example: bad_gateway
+
+    ChatMessage:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          description: Plain string or structured content blocks
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+        tool_calls:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        tool_call_id:
+          type: string
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          example: gpt-4o-mini
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        stream:
+          type: boolean
+          default: false
+        temperature:
+          type: number
+          format: double
+        max_tokens:
+          type: integer
+          minimum: 1
+        top_p:
+          type: number
+          format: double
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        tool_choice:
+          description: Tool selection policy
+        response_format:
+          type: object
+          additionalProperties: true
+        x_provider:
+          type: string
+          description: Weft extension — force a specific upstream provider
+
+    ChatCompletionResponse:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: chat.completion
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            required: [index, message]
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: "#/components/schemas/ChatMessage"
+              finish_reason:
+                type: string
+                nullable: true
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+
+    ModelListResponse:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            type: object
+            required: [id, object]
+            properties:
+              id:
+                type: string
+              object:
+                type: string
+                example: model
+              owned_by:
+                type: string
+
+    CapabilityRegistryEntry:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        provider:
+          type: string
+        description:
+          type: string
+
+    CapabilityListResponse:
+      type: object
+      required: [capabilities]
+      properties:
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityRegistryEntry"
+
+    CapabilityCallResponse:
+      type: object
+      properties:
+        capability:
+          type: string
+        provider:
+          type: string
+        response:
+          description: Provider-specific result payload
+        status:
+          type: string
+          example: executed
+        mode:
+          type: string
+          enum: [wasm-phase, service]
+
+    PackageSource:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [wasm, service, native]
+        current_source:
+          type: string
+        provides:
+          type: array
+          items:
+            type: string
+
+    PackageIndexResponse:
+      type: object
+      properties:
+        version:
+          type: integer
+        packages:
+          type: array
+          items:
+            $ref: "#/components/schemas/PackageSource"
+
+    ProviderSummary:
+      type: object
+      properties:
+        name:
+          type: string
+        base_url:
+          type: string
+        format:
+          type: string
+          example: openai
+        models:
+          type: array
+          items:
+            type: string
+        key_count:
+          type: integer
+
+    RoutingConfig:
+      type: object
+      properties:
+        default_provider:
+          type: string
+        default_model:
+          type: string
+        image_provider:
+          type: string
+
+    ProviderListResponse:
+      type: object
+      required: [providers, routing]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderSummary"
+        routing:
+          $ref: "#/components/schemas/RoutingConfig"
+
+    ApiKeyConfig:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+
+    CreateProviderRequest:
+      type: object
+      required: [name, base_url]
+      properties:
+        name:
+          type: string
+        base_url:
+          type: string
+        format:
+          type: string
+          default: openai
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiKeyConfig"
+        models:
+          type: array
+          items:
+            type: string
+
+    ProviderDetail:
+      allOf:
+        - $ref: "#/components/schemas/ProviderSummary"
+        - type: object
+          properties:
+            keys:
+              type: array
+              items:
+                $ref: "#/components/schemas/ApiKeyConfig"
+
+    ResolvedApp:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        enabled_features:
+          type: array
+          items:
+            type: string
+        bindings:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+        config_path:
+          type: string
+          nullable: true
+        errors:
+          type: array
+          items:
+            type: string
+
+    AppListResponse:
+      type: object
+      required: [apps]
+      properties:
+        apps:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResolvedApp"

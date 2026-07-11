@@ -1,0 +1,13 @@
+/target/
+**/target/
+/data/
+/config/config.toml
+*.exe
+*.dll
+*.pdb
+*.dylib
+*.so
+.DS_Store
+**/.omc/
+examples/sidecar-http/data/
+examples/sidecar-http/config.toml
