@@ -22,16 +22,7 @@ jobs:
       - name: Test weft-package-sdk
         run: cargo test -p weft-package-sdk
       - name: Test weft-core (standalone-safe)
-        run: |
-          cargo test -p weft-core --lib \
-            --skip package_ui_route_serves_installed \
-            --skip instance_config_loader_reads_instance \
-            --skip product_package_declaration_loader \
-            --skip weft_code_product_package_manifest \
-            --skip repository_package_index_includes \
-            --skip unmet_requirements_repo_index \
-            --skip ui_metadata_prefers_existing \
-            --skip test_load_current_official_package_manifests
+        run: cargo test -p weft-core --lib -- --skip package_ui_route_serves_installed --skip instance_config_loader_reads_instance --skip product_package_declaration_loader --skip weft_code_product_package_manifest --skip repository_package_index_includes --skip unmet_requirements_repo_index --skip ui_metadata_prefers_existing --skip test_load_current_official_package_manifests
 
   windows-build:
     runs-on: windows-latest
