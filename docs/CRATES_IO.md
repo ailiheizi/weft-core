@@ -25,24 +25,23 @@ Weft Core publishes two crates from this repository:
 
    The [`publish-crates.yml`](../.github/workflows/publish-crates.yml) workflow publishes **`weft-package-sdk` first**, then **`weft-core`**.
 
-## Manual publish
+## 一键配置 crates.io 发布
 
-From the repository root:
+1. 打开 https://crates.io/settings/tokens 创建 API Token
+2. 设置 GitHub Secret：
 
-```bash
-cargo publish -p weft-package-sdk
-cargo publish -p weft-core
+```powershell
+gh secret set CARGO_REGISTRY_TOKEN --repo ailiheizi/weft-core
+# 粘贴 token 后回车
 ```
 
-You must publish `weft-package-sdk` before `weft-core` because the latter depends on the former on crates.io.
+3. 重新触发发布：
 
-## First-time crate claim
-
-The first publish of each crate name claims it on crates.io under your account. Ensure you are logged in:
-
-```bash
-cargo login
+```powershell
+gh workflow run publish-crates.yml --repo ailiheizi/weft-core
+# 或打新 tag: git tag v0.1.1 && git push origin v0.1.1
 ```
+
 
 ## Versioning
 

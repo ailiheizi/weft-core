@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "weft-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3962,6 +3962,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "lazy_static",
+ "libc",
  "libloading",
  "once_cell",
  "rand 0.8.7",
@@ -3984,7 +3985,7 @@ dependencies = [
 
 [[package]]
 name = "weft-package-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "extism-pdk",
