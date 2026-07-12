@@ -7,7 +7,7 @@ repository.workspace = true
 description = "OpenAI-compatible AI agent runtime with WASM capability plugin system"
 readme = "../../README.md"
 documentation = "https://docs.rs/weft-core"
-keywords = ["ai", "llm", "openai", "agent", "wasm", "extism", "orchestration"]
+keywords = ["ai", "llm", "openai", "agent", "wasm"]
 categories = ["api-bindings", "web-programming::http-server"]
 exclude = ["examples/**"]
 
