@@ -1,18 +1,18 @@
-//! Stable, additive extension points for Weft modules.
+//! Additive hook contracts for product packages.
 //!
-//! Hooks are contracts, not dependencies. A base module explicitly exports a
-//! hook and an overlay explicitly attaches to it. The runtime will eventually
-//! dispatch handlers through the package bridge; this module owns the shared
-//! validation and deterministic ordering rules.
+//! A package is a product. Another package may add behavior only by attaching
+//! to a hook that product explicitly exports. There is no package resolver,
+//! profile, download protocol, or package-version negotiation here.
 
 use serde::{Deserialize, Serialize};
 
+/// A stable hook name exported by a product package.
+///
+/// Breaking changes use a new name, for example
+/// `weft_claw.turn.before_tools.v2`; no separate version negotiation is needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookContract {
-    /// Stable, versioned id, for example `weft_claw.turn.before_tools.v1`.
     pub id: String,
-    /// Version of the hook payload contract.
-    pub api_version: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -23,42 +23,27 @@ pub enum HookPhase {
     After,
 }
 
+/// One package's declared additive change to a product hook.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookAttachment {
-    pub overlay: String,
+    pub package: String,
     pub hook: String,
-    pub api_version: u32,
     pub phase: HookPhase,
-    #[serde(default)]
-    pub order: i32,
     pub entry: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookValidationError {
     UnknownHook(String),
-    IncompatibleApiVersion {
-        hook: String,
-        expected: u32,
-        received: u32,
-    },
-    DuplicateOverlay(String),
+    DuplicateAttachment { package: String, hook: String },
 }
 
 impl std::fmt::Display for HookValidationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownHook(hook) => write!(formatter, "overlay targets unknown hook '{hook}'"),
-            Self::IncompatibleApiVersion {
-                hook,
-                expected,
-                received,
-            } => write!(
-                formatter,
-                "overlay targets hook '{hook}' API v{received}, but the base module exports v{expected}"
-            ),
-            Self::DuplicateOverlay(overlay) => {
-                write!(formatter, "overlay '{overlay}' attaches more than once to the same hook phase")
+            Self::UnknownHook(hook) => write!(formatter, "package targets unknown hook '{hook}'"),
+            Self::DuplicateAttachment { package, hook } => {
+                write!(formatter, "package '{package}' attaches more than once to hook '{hook}'")
             }
         }
     }
@@ -66,8 +51,10 @@ impl std::fmt::Display for HookValidationError {
 
 impl std::error::Error for HookValidationError {}
 
-/// Validates explicit overlay attachments and returns deterministic dispatch
-/// order. `replace` is deliberately absent: v2 extensions are additive only.
+/// Validates attachments and returns a deterministic dispatch order.
+///
+/// The package name provides the tie breaker, so hook manifests do not need a
+/// priority language or a dependency/order solver.
 pub fn validate_and_order(
     contracts: &[HookContract],
     attachments: &[HookAttachment],
@@ -75,34 +62,21 @@ pub fn validate_and_order(
     let mut result = attachments.to_vec();
 
     for attachment in &result {
-        let Some(contract) = contracts.iter().find(|contract| contract.id == attachment.hook)
-        else {
+        if !contracts.iter().any(|contract| contract.id == attachment.hook) {
             return Err(HookValidationError::UnknownHook(attachment.hook.clone()));
-        };
-        if contract.api_version != attachment.api_version {
-            return Err(HookValidationError::IncompatibleApiVersion {
-                hook: attachment.hook.clone(),
-                expected: contract.api_version,
-                received: attachment.api_version,
-            });
         }
     }
 
     result.sort_by(|left, right| {
-        (&left.hook, left.phase, left.order, &left.overlay).cmp(&(
-            &right.hook,
-            right.phase,
-            right.order,
-            &right.overlay,
-        ))
+        (&left.hook, left.phase, &left.package).cmp(&(&right.hook, right.phase, &right.package))
     });
 
     for pair in result.windows(2) {
-        if pair[0].hook == pair[1].hook
-            && pair[0].phase == pair[1].phase
-            && pair[0].overlay == pair[1].overlay
-        {
-            return Err(HookValidationError::DuplicateOverlay(pair[0].overlay.clone()));
+        if pair[0].hook == pair[1].hook && pair[0].package == pair[1].package {
+            return Err(HookValidationError::DuplicateAttachment {
+                package: pair[0].package.clone(),
+                hook: pair[0].hook.clone(),
+            });
         }
     }
 
@@ -116,36 +90,33 @@ mod tests {
     fn contract() -> HookContract {
         HookContract {
             id: "weft_claw.turn.before_tools.v1".into(),
-            api_version: 1,
         }
     }
 
-    fn attachment(overlay: &str, order: i32) -> HookAttachment {
+    fn attachment(package: &str) -> HookAttachment {
         HookAttachment {
-            overlay: overlay.into(),
+            package: package.into(),
             hook: "weft_claw.turn.before_tools.v1".into(),
-            api_version: 1,
             phase: HookPhase::Before,
-            order,
-            entry: "overlay.wasm".into(),
+            entry: "package.wasm".into(),
         }
     }
 
     #[test]
-    fn attachments_are_ordered_without_dependency_resolution() {
-        let ordered = validate_and_order(&[contract()], &[attachment("later", 10), attachment("first", 0)])
+    fn additive_packages_have_a_deterministic_order_without_a_solver() {
+        let ordered = validate_and_order(&[contract()], &[attachment("z-tools"), attachment("a-tools")])
             .expect("valid attachments");
-        assert_eq!(ordered[0].overlay, "first");
-        assert_eq!(ordered[1].overlay, "later");
+        assert_eq!(ordered[0].package, "a-tools");
+        assert_eq!(ordered[1].package, "z-tools");
     }
 
     #[test]
-    fn incompatible_hook_contract_is_rejected() {
-        let mut attachment = attachment("old-overlay", 0);
-        attachment.api_version = 2;
+    fn a_package_cannot_attach_to_a_hook_the_product_did_not_export() {
+        let mut attachment = attachment("custom-tools");
+        attachment.hook = "weft_claw.turn.hidden.v1".into();
         assert!(matches!(
             validate_and_order(&[contract()], &[attachment]),
-            Err(HookValidationError::IncompatibleApiVersion { .. })
+            Err(HookValidationError::UnknownHook(_))
         ));
     }
 }
