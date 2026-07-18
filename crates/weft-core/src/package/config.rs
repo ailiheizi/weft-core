@@ -1,3 +1,4 @@
+use crate::hooks::HookPhase;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,6 +15,10 @@ pub struct PackageManifest {
     pub capability: Option<PackageCapability>,
     #[serde(default)]
     pub package: Option<PackageMeta>,
+    #[serde(default)]
+    pub hooks: PackageHooks,
+    #[serde(default)]
+    pub addon: Option<PackageAddon>,
     #[serde(default)]
     pub runtime_contract: Option<PackageRuntimeContract>,
     #[serde(default)]
@@ -85,6 +90,23 @@ pub struct PackageMeta {
     pub priority: Option<i32>,
     #[serde(default)]
     pub assets: Vec<String>,
+}
+
+/// Hooks intentionally opened by this product package.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PackageHooks {
+    #[serde(default)]
+    pub exports: Vec<String>,
+}
+
+/// A local package that adds behavior to one hook of one product.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageAddon {
+    pub product: String,
+    pub hook: String,
+    pub phase: HookPhase,
+    #[serde(default = "default_entry")]
+    pub entry: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -464,6 +486,42 @@ provides = ["chat_channel", "companion.turn.handle"]
         assert!(loaded
             .resolved_provides()
             .contains(&"companion.turn.handle".to_string()));
+    }
+
+    #[test]
+    fn test_parse_product_hooks_and_local_addon() {
+        let product: PackageManifest = toml::from_str(
+            r#"
+[package_info]
+name = "weft-claw"
+version = "ignored-by-core"
+description = "Product"
+
+[hooks]
+exports = ["weft_claw.turn.before_tools.v1"]
+"#,
+        )
+        .expect("product manifest");
+        assert_eq!(product.hooks.exports, vec!["weft_claw.turn.before_tools.v1"]);
+
+        let addon: PackageManifest = toml::from_str(
+            r#"
+[package_info]
+name = "custom-tools"
+version = "ignored-by-core"
+description = "Additive change"
+
+[addon]
+product = "weft-claw"
+hook = "weft_claw.turn.before_tools.v1"
+phase = "before"
+entry = "package.wasm"
+"#,
+        )
+        .expect("addon manifest");
+        let addon = addon.addon.expect("addon declaration");
+        assert_eq!(addon.product, "weft-claw");
+        assert_eq!(addon.phase, HookPhase::Before);
     }
 
     #[test]
