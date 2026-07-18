@@ -5,8 +5,10 @@
 //! solver or merges registry sources.
 
 use crate::hooks::{validate_and_order, HookAttachment, HookContract, HookValidationError};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleArtifact {
@@ -65,6 +67,27 @@ impl From<HookValidationError> for ProfileValidationError {
 }
 
 impl ModuleProfile {
+    /// Loads a v2 profile from TOML and rejects invalid composition before the
+    /// runtime can stage or activate any module artifacts.
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read module profile {}", path.display()))?;
+        let profile: Self = toml::from_str(&content)
+            .with_context(|| format!("failed to parse module profile {}", path.display()))?;
+        if profile.schema_version != 1 {
+            bail!(
+                "unsupported module profile schema v{} in {}",
+                profile.schema_version,
+                path.display()
+            );
+        }
+        profile
+            .validate()
+            .map_err(|error| anyhow::anyhow!(error))?;
+        Ok(profile)
+    }
+
     /// Validates explicit composition and returns the handler dispatch order.
     pub fn validate(&self) -> Result<Vec<HookAttachment>, ProfileValidationError> {
         let mut module_ids = HashSet::new();
@@ -161,5 +184,19 @@ mod tests {
             }],
         };
         assert_eq!(profile.validate().expect("valid profile").len(), 1);
+    }
+
+    #[test]
+    fn loader_rejects_an_unknown_schema_before_activation() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let profile_path = directory.path().join("profile.toml");
+        std::fs::write(
+            &profile_path,
+            "schema_version = 2\nname = 'future'\nmodules = []\n",
+        )
+        .expect("profile fixture");
+
+        let error = ModuleProfile::load_from_path(&profile_path).expect_err("schema rejected");
+        assert!(error.to_string().contains("unsupported module profile schema v2"));
     }
 }
