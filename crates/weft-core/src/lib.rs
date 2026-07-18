@@ -8,7 +8,6 @@ pub mod defaults;
 pub mod ffi;
 pub mod layers;
 pub mod hooks;
-pub mod module_profile;
 pub mod package;
 pub mod pipeline;
 pub mod process;
